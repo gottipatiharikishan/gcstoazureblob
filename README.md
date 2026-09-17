@@ -1,5 +1,469 @@
 # gcstoazureblob
 
+GCS → Pub/Sub → Azure Blob Sync
+GCP Configuration Steps
+1. Project Configuration
+Set the active project:
+gcloud config set project gcp-poc-501612
+gcloud config get-value project
+Output -> gcp-poc-501612
+2. Ensure Pub/Sub API is Enabled
+gcloud services enable pubsub.googleapis.com
+Verify:
+gcloud services list --enabled | grep pubsub
+Expected Output:
+pubsub.googleapis.com
+3. Create Pub/Sub Topic
+gcloud pubsub topics create gcs-azureblob
+Verify:
+gcloud pubsub topics list
+Expected:
+gcs-azureblob
+4. Create Pub/Sub Subscription
+gcloud pubsub subscriptions create gcs-azureblob-sync --topic=gcs-azureblob
+Verify:
+gcloud pubsub subscriptions list
+Expected:
+gcs-azureblob-sync
+5. Configure GCS Bucket Notifications
+Bucket:
+highradius-poc-gcs-blobstorage
+Create Notification for OBJECT_FINALIZE
+gcloud storage buckets notifications create gs://highradius-poc-gcs-blobstorage 
+--topic=gcs-azureblob --event-types=OBJECT_FINALIZE
+Create Notification for OBJECT_DELETE
+gcloud storage buckets notifications create gs://highradius-poc-gcs-blobstorage 
+--topic=gcs-azureblob --event-types=OBJECT_DELETE
+Create Notification for OBJECT_METADATA_UPDATE
+gcloud storage buckets notifications create gs://highradius-poc-gcs-blobstorage 
+--topic=gcs-azureblob --event-types=OBJECT_METADATA_UPDATE
+Create Notification for OBJECT_ARCHIVE
+gcloud storage buckets notifications create gs://highradius-poc-gcs-blobstorage --topic=gcs-azureblob --event-types=OBJECT_ARCHIVE
+Event Coverage
+OBJECT_FINALIZE
+Triggered when:
+New file upload
+Existing file overwrite
+OBJECT_DELETE
+Triggered when:
+File deleted
+OBJECT_METADATA_UPDATE
+Triggered when:
+Content-Type change
+Labels change
+Custom metadata update
+Storage class change
+OBJECT_ARCHIVE
+Triggered when:
+Object archived
+Versioning event
+Previous object generation replaced
+Verify Notifications
+gcloud storage buckets notifications list gs://highradius-poc-gcs-blobstorage
+Expected:
+OBJECT_FINALIZE
+OBJECT_DELETE
+OBJECT_METADATA_UPDATE
+OBJECT_ARCHIVE
+6. Create Pub/Sub Listener Service Account
+gcloud iam service-accounts create pubsub-listener-sa --display-name="PubSub Listener Service Account"
+7. Grant Pub/Sub Subscriber Access (Enterprise Recommendation)
+Subscription-Level Access
+gcloud pubsub subscriptions add-iam-policy-binding gcs-azureblob-sync --member="serviceAccount:pubsub-listener-sa@gcp-poc-501612.iam.gserviceaccount.com" --role="roles/pubsub.subscriber"
+Purpose
+Read Pub/Sub messages
+Pull bucket notifications
+Acknowledge messages
+
+8. Grant GCS Read Access
+Bucket-Level Access
+gcloud storage buckets add-iam-policy-binding gs://highradius-poc-gcs-blobstorage --member="serviceAccount:pubsub-listener-sa@gcp-poc-501612.iam.gserviceaccount.com" --role="roles/storage.objectViewer"
+Purpose
+Read files from GCS
+Download objects
+Access object metadata
+9. Create Key for Listener Service Account
+gcloud iam service-accounts keys create pubsub-listener-sa-key.json --iam-account=pubsub-listener-sa@gcp-poc-501612.iam.gserviceaccount.com
+This key will be used by the Python listener service running on Azure VM.
+10. Create Rclone Service Account
+gcloud iam service-accounts create rclone-sa --display-name="Rclone Service Account"
+11. Grant Rclone Access
+Bucket-Level Access
+gcloud storage buckets add-iam-policy-binding gs://highradius-poc-gcs-blobstorage --member="serviceAccount:rclone-sa@gcp-poc-501612.iam.gserviceaccount.com" --role="roles/storage.objectAdmin"
+Purpose
+Read objects
+Create objects
+Update objects
+Delete objects
+Manage GCS files
+12. Create Key for Rclone Service Account
+gcloud iam service-accounts keys create rclone-sa-key.json --iam-account=rclone-sa@gcp-poc-501612.iam.gserviceaccount.com
+13. Verify Current Setup
+Verify Topics
+gcloud pubsub topics list
+Verify Subscriptions
+gcloud pubsub subscriptions list
+Verify Notifications
+gcloud storage buckets notifications list gs://highradius-poc-gcs-blobstorage
+
+Verify Service Accounts
+gcloud iam service-accounts list
+Verify JSON Keys
+ls -ltr *.json
+Expected:
+pubsub-listener-sa-key.json
+rclone-sa-key.json
+
+Final Enterprise Security Model
+pubsub-listener-sa
+Permissions:
+Subscription:
+gcs-azureblob-sync
+└── roles/pubsub.subscriber
+
+Bucket:
+highradius-poc-gcs-blobstorage
+└── roles/storage.objectViewer
+Capabilities:
+Read Pub/Sub messages
+Read files from GCS
+Cannot modify files
+Cannot access other buckets
+rclone-sa
+Permissions:
+Bucket:
+highradius-poc-gcs-blobstorage
+└── roles/storage.objectAdmin
+Capabilities:
+Read files
+Create files
+Update files
+Delete files
+Cannot access other buckets
+
+Final Architecture
+Google Cloud Storage
+(highradius-poc-gcs-blobstorage)
+│
+▼
+Pub/Sub Topic
+(gcs-azureblob)
+│
+▼
+Subscription
+(gcs-azureblob-sync)
+│
+▼
+pubsub-listener-sa
+│
+▼
+Python Listener Service
+│
+▼
+rclone-sa
+│
+▼
+Azure Blob Storage
+
+Azure VM Configuration
+1. Create Working Directory
+sudo mkdir -p /opt/gcs-azure-sync
+sudo chown -R trianzadmin:trianzadmin /opt/gcs-azure-sync
+cd /opt/gcs-azure-sync
+2. Copy Service Account Keys
+Copy from GCP Cloud Shell to VM:
+pubsub-listener-sa-key.json
+rclone-sa-key.json
+Directory:
+/opt/gcs-azure-sync/
+├── pubsub-listener-sa-key.json
+├── rclone-sa-key.json
+Set permissions:
+chmod 600 *.json
+Step 1: Install Python 
+sudo apt update
+sudo apt install -y python3-full python3-venv
+Then verify:
+python3 -m venv venv
+Now activate it:
+source venv/bin/activate
+Expected prompt:
+(venv) trianzadmin@gcstoblobstorage:/opt/gcs-azure-sync$
+Install Python Packages
+pip install --upgrade pip
+pip install google-cloud-pubsub google-cloud-storage azure-storage-blob python-dotenv
+Verify:
+pip list
+Test Pub/Sub Authentication
+export GOOGLE_APPLICATION_CREDENTIALS=/opt/gcs-azure-sync/pubsub-listener-sa-key.json
+Install and configure Rclone:
+curl https://rclone.org/install.sh | sudo bash
+Verify Rclone Configuration
+Check Configured Remotes
+rclone listremotes
+Expected Output:
+gcs:
+azureblob:
+Display Rclone Configuration
+rclone config show
+Expected Output:
+[gcs]
+type = google cloud storage
+project_number = 615629292552
+service_account_file = /opt/gcs-azure-sync/rclone-sa-key.json
+bucket_policy_only = true
+location = asia-south1
+
+[azureblob]
+type = azureblob
+account = hirteststoragemigration
+key = ***************
+
+RCLONE CONFIGURATION RUNBOOK
+
+Objective
+---------
+
+Configure Rclone on Azure VM to transfer files between Google Cloud Storage (GCS) and Azure Blob Storage.
+
+Prerequisites
+-------------
+
+Verify service account keys are available:
+
+ls -ltr /opt/gcs-azure-sync/
+
+Expected:
+
+pubsub-listener-sa-key.json
+rclone-sa-key.json
+
+Verify Rclone Installation
+--------------------------
+
+rclone version
+
+Expected:
+
+rclone v1.x.x
+
+Configure GCS Remote
+--------------------
+
+Start configuration:
+
+rclone config
+
+Select:
+
+n) New remote
+
+Remote Name:
+
+gcs
+
+Storage Type:
+
+Google Cloud Storage
+
+Service Account File:
+
+/opt/gcs-azure-sync/rclone-sa-key.json
+
+Project Number:
+
+615629292552
+
+Bucket Policy Only:
+
+true
+
+Location:
+
+asia-south1
+
+Advanced Configuration:
+
+n
+
+Confirm Save:
+
+y
+
+Expected Configuration:
+
+[gcs]
+type = google cloud storage
+project_number = 615629292552
+service_account_file = /opt/gcs-azure-sync/rclone-sa-key.json
+bucket_policy_only = true
+location = asia-south1
+
+Configure Azure Blob Remote
+---------------------------
+
+Run:
+
+rclone config
+
+Select:
+
+n) New remote
+
+Remote Name:
+
+azureblob
+
+Storage Type:
+
+Microsoft Azure Blob Storage
+
+Storage Account Name:
+
+hirteststoragemigration
+
+Storage Account Key:
+
+<Azure Storage Account Key>
+
+Advanced Configuration:
+
+n
+
+Confirm Save:
+
+y
+
+Expected Configuration:
+
+[azureblob]
+type = azureblob
+account = hirteststoragemigration
+key = **************
+
+Verify Configured Remotes
+-------------------------
+
+rclone listremotes
+
+Expected:
+
+gcs:
+azureblob:
+
+Verify Configuration File
+-------------------------
+
+rclone config file
+
+Expected:
+
+Configuration file is stored at:
+
+/home/trianzadmin/.config/rclone/rclone.conf
+
+Display Configuration
+---------------------
+
+rclone config show
+
+Expected:
+
+[gcs]
+type = google cloud storage
+project_number = 615629292552
+service_account_file = /opt/gcs-azure-sync/rclone-sa-key.json
+bucket_policy_only = true
+location = asia-south1
+
+[azureblob]
+type = azureblob
+account = hirteststoragemigration
+key = **************
+
+Validate GCS Connectivity
+-------------------------
+
+List bucket contents:
+
+rclone lsd gcs:highradius-poc-gcs-blobstorage
+
+List files:
+
+rclone ls gcs:highradius-poc-gcs-blobstorage
+
+Validate Azure Blob Connectivity
+--------------------------------
+
+List containers:
+
+rclone lsd azureblob:
+
+List files in container:
+
+rclone ls azureblob:<container-name>
+
+Example:
+
+rclone ls azureblob:gcsdemo
+
+Test Copy from GCS to Azure Blob
+--------------------------------
+
+Copy a single file:
+
+rclone copy \
+gcs:highradius-poc-gcs-blobstorage/harigcs-azureblob.txt \
+azureblob:<container-name> \
+-v
+
+Verify File in Azure Blob
+-------------------------
+
+rclone ls azureblob:<container-name>
+
+Dry Run Test
+------------
+
+rclone copy \
+gcs:highradius-poc-gcs-blobstorage \
+azureblob:<container-name> \
+--dry-run \
+-vv
+
+Full Synchronization Test
+-------------------------
+
+rclone sync \
+gcs:highradius-poc-gcs-blobstorage \
+azureblob:<container-name> \
+-v
+
+Verify:
+
+rclone ls azureblob:<container-name>
+
+Configuration Summary
+---------------------
+
+Source
+
+Remote Name : gcs
+Bucket : highradius-poc-gcs-blobstorage
+Project : gcp-poc-501612
+Authentication : Service Account
+
+Pub/Sub Listener Service Runbook
+Objective
+Create a Python service on Azure VM that:
+
+
+
+
+
+
+
+
 # gcstoazureblob
 
 GCS → Pub/Sub → Azure Blob Sync (Production Runbook)
