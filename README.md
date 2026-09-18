@@ -4152,4 +4152,18 @@ How to verify each file individually?
 
 
 
+✅ Blob Created
+2
+✅ Blob Deleted
+3
+✅ Directory Created
+4
+✅ Directory Deleted
+5
+✅ Blob Renamed
+6
+✅ Directory Renamed
+
+
+
 
