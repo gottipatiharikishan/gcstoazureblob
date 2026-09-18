@@ -1646,3 +1646,1668 @@ Show more lines
 
 Provide your feedback on BizChat
 You said:
+
+
+
+
+Blob-GCS
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Work
+Harikishan
+M365 Copilot (Basic)
+
+
+
+Auto
+
+
+You said:
+ok
+Copilot said:
+Great ✅
+
+Since the Event Grid subscription is ready, the next step in the rollback architecture is to build the consumer side.
+
+Next Phase Overview
+Step 1: Create a Dedicated VM
+I recommend not using your current VM (gcstoblobstorage) for rollback processing.
+
+Recommended VM:
+
+Reason:
+
+This keeps both directions isolated.
+
+Step 2: Build Working Directory
+SSH into the VM:
+
+Step 3: Python Runtime
+Verify:
+
+Step 4: Create Virtual Environment
+Step 5: Install Packages
+Step 6: Prepare PostgreSQL
+Reuse existing PostgreSQL if desired, or new PostgreSQL instance.
+
+Create table:
+
+Step 7: Create GCP Service Account (already discussed)
+Grant:
+
+Generate key and copy it to:
+
+Step 8: Create Environment File
+Step 9: Build Queue Listener
+The listener should:
+
+BlobCreated
+BlobDeleted
+DirectoryCreated
+DirectoryDeleted
+BlobRenamed
+DirectoryRenamed
+Step 10: Create systemd Service
+Enable:
+
+Validation
+Upload:
+
+to:
+
+Verify:
+
+Expected:
+
+The next major deliverable is the full listener.py for Azure Queue → PostgreSQL → GCS, including handling all 6 Event Grid event types.
+
+
+
+You said:
+
+Copilot said:
+On this screen, for the architecture we've selected:
+
+you should choose:
+
+From the dropdown, select:
+
+Then Azure will ask for:
+
+Select:
+
+Then:
+
+Select:
+
+Final Production Configuration
+Event Subscription Name
+Event Schema
+Event Types
+Client requirement:
+
+Filters
+Recommended:
+
+Dead Lettering
+Dead Letter Container:
+
+Retry Policy
+Expiration
+Delivery Properties
+Endpoint Type
+Queue Destination
+After Clicking Create
+The flow becomes:
+
+Once the Event Subscription is created successfully, the next step is:
+
+and I'll give you:
+
+PostgreSQL blob_events table
+.env
+Full listener.py
+Complete systemd service
+Validation procedure
+for the rollback architecture.
+
+
+
+You said:
+
+Copilot said:
+This screen looks correct. ✅
+
+For your enterprise rollback architecture, I would use the following settings:
+
+Endpoint Details
+Cross-Tenant Delivery
+Keep it disabled unless the storage account and queue are in different Azure tenants.
+
+Managed Identity for Delivery
+Current:
+
+For your design:
+
+Keep it as:
+
+Because Event Grid can write directly to the Storage Queue in the same subscription without requiring a managed identity.
+
+Event Types Selected
+You mentioned the client wants all six:
+
+That's acceptable, provided the listener handles each event type appropriately.
+
+Before Clicking Create
+Verify:
+
+What Happens Next
+After you click Create:
+
+The next implementation step will be:
+
+Build Queue Consumer
+We'll create:
+
+and then:
+
+that:
+
+Polls Azure Storage Queue
+Reads Event Grid messages
+Handles all 6 event types
+Writes audit records to PostgreSQL (blob_events)
+Uploads files to GCS
+Deletes files from GCS when needed
+Runs as a systemd service
+That listener implementation is the next major deliverable after this Event Grid subscription is created successfully.
+
+
+
+You said:
+
+still create option not highlight 
+Copilot said:
+The Create button is still disabled because one of the required fields on another tab is not valid or not completed.
+
+From your screenshot, the most likely causes are:
+
+1. System Topic Name (Most Common)
+Scroll back to the Basics tab and check:
+
+Make sure it contains a value, for example:
+
+or
+
+This field is mandatory.
+
+2. Filters Tab
+Since you selected all 6 event types, go to:
+
+Verify there are no validation errors.
+
+Recommended:
+
+If a filter value is partially entered or invalid, Azure disables Create.
+
+3. Additional Features Tab
+You enabled:
+
+Check the Event Time To Live fields.
+
+The screenshot earlier showed:
+
+This can cause validation issues.
+
+Set:
+
+Or:
+
+depending on what Azure accepts in your portal version.
+
+4. Expiration Time
+Make sure:
+
+is unchecked.
+
+Production subscriptions should not expire automatically.
+
+5. Endpoint Validation
+Confirm:
+
+If the queue was recently created, click:
+
+and reselect the queue.
+
+Quick Check
+Go back through the tabs in this order:
+
+Look for any red asterisks (*) or red validation messages.
+
+The two fields most likely blocking Create are:
+
+or
+
+Tell me:
+
+and whether Enable expiration time is currently checked or unchecked, and I'll pinpoint the exact issue.
+
+
+
+You said:
+
+Copilot said:
+The Basics tab looks valid.
+
+The reason Create is still disabled is almost certainly on one of the other tabs:
+
+Filters
+Additional Features
+Delivery Properties
+Based on your earlier screenshot, the most likely issue is still in Additional Features.
+
+Check 1: Event Subscription Expiration Time
+Go to Additional Features and make sure:
+
+is unchecked.
+
+For production:
+
+If it remains enabled, Azure may require a valid future timestamp and can block creation.
+
+Check 2: Event Time To Live
+If Retry Policies are enabled, verify the TTL fields are valid.
+
+Recommended:
+
+Avoid:
+
+Some portal versions accept it, some trigger validation issues.
+
+Check 3: Filters Tab
+Open Filters.
+
+Verify:
+
+contains a valid path, for example:
+
+or leave it completely blank.
+
+Do not leave a partially entered value.
+
+Check 4: Storage Queue Permissions
+Sometimes Event Grid cannot validate the queue endpoint if queue permissions aren't resolved yet.
+
+Click:
+
+next to:
+
+and reselect:
+
+Quickest Way to Find the Error
+Go through the tabs:
+
+and look for:
+
+Red text
+Red borders
+Red asterisks with warnings
+Azure usually marks the exact field preventing creation.
+
+Send Screenshots
+Please send screenshots of:
+
+Filters
+Additional Features
+Delivery Properties
+and I'll pinpoint exactly what's blocking the Create button.
+
+
+
+You said:
+Dead-Lettering
+Save events that cannot be delivered to storage. Learn more 
+Enable dead-lettering
+Cross-tenant delivery
+Disabled
+Storage Subscription
+HiRAzurePOC2026
+Storage Blob Container
+eventgrid-deadletter
+ (change) 
+Managed Identity for Dead-Letter
+Managed identity type
+None
+Retry Policies
+Customize how many times and for how long event delivery will be retried. Learn more 
+Configure Retry Policies
+Events will be dead-lettered or discarded after either the number of delivery attempts is exceeded or the time to live has elapsed.
+Max Event Delivery Attempts
+Event Time to Live
+Days
+Hours
+Minutes
+Seconds
+Event Subscription Expiration Time
+Set a time at which the event subscription will automatically be deleted.
+Enable expiration time
+Labels
+Set metadata on this event subscription that is only visible through this experience. The metadata (labels) set does not affect the data plane behavior in any way. For example, labels do not show anywhere in the request or in the events that are sent to subscribers.
+
+
+
+Copilot said:
+I found the issue. ✅
+
+The Create button is disabled because under Retry Policies, you've enabled:
+
+but you haven't filled the required values:
+
+Azure treats these as mandatory when retry policies are enabled.
+
+Recommended Values
+Max Event Delivery Attempts
+Event Time To Live
+Set:
+
+This gives:
+
+which is a good production value.
+
+Event Subscription Expiration Time
+Make sure:
+
+is:
+
+Do not enable expiration in production.
+
+Dead Lettering
+Current values are good:
+
+Labels (Optional)
+You can add:
+
+but these are optional and do not affect functionality.
+
+Final Additional Features Configuration
+After entering the retry values, the Create button should become active.
+
+Once the Event Grid Subscription is created successfully, we'll move to:
+
+and continue building the rollback path:
+
+
+
+
+
+
+Message Copilot
+
+
+AI-generated content may be incorrect
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Work
+Harikishan
+M365 Copilot (Basic)
+
+
+
+Auto
+
+
+You said:
+ok
+Copilot said:
+Great ✅
+
+Since the Event Grid subscription is ready, the next step in the rollback architecture is to build the consumer side.
+
+Next Phase Overview
+
+
+
+Plain Text
+Azure Blob Storage
+        ↓
+Event Grid
+        ↓
+Storage Queue (blob-sync-events)
+        ↓
+Azure VM Listener
+        ↓
+PostgreSQL (blob_events)
+        ↓
+Google Cloud Storage
+Step 1: Create a Dedicated VM
+I recommend not using your current VM (gcstoblobstorage) for rollback processing.
+
+Recommended VM:
+
+
+
+
+Plain Text
+VM Name:
+blobtogcslistener
+ 
+OS:
+Ubuntu 24.04 LTS
+ 
+Region:
+South India
+ 
+Size:
+Standard_D4s_v5
+Reason:
+
+
+
+
+Plain Text
+Current VM:
+GCS → Azure
+ 
+New VM:
+Azure → GCS (Rollback)
+This keeps both directions isolated.
+
+Step 2: Build Working Directory
+SSH into the VM:
+
+
+
+
+Shell
+sudo mkdir -p /opt/blob-to-gcs
+ 
+sudo chown -R $USER:$USER /opt/blob-to-gcs
+ 
+cd /opt/blob-to-gcs
+Step 3: Python Runtime
+
+
+
+Shell
+sudo apt update
+ 
+sudo apt install -y \
+python3 \
+python3-pip \
+python3-venv
+Verify:
+
+
+
+
+Shell
+python3 --version
+Step 4: Create Virtual Environment
+
+
+
+Shell
+python3 -m venv venv
+ 
+source venv/bin/activate
+Step 5: Install Packages
+
+
+
+Shell
+pip install --upgrade pip
+
+
+
+Shell
+pip install azure-storage-queue
+
+
+
+Shell
+pip install azure-storage-blob
+
+
+
+Shell
+pip install google-cloud-storage
+
+
+
+Shell
+pip install psycopg2-binary
+
+
+
+Shell
+pip install python-dotenv
+Step 6: Prepare PostgreSQL
+Reuse existing PostgreSQL if desired, or new PostgreSQL instance.
+
+Create table:
+
+
+
+
+SQL
+CREATE TABLE blob_events
+(
+    event_id VARCHAR(100) PRIMARY KEY,
+    blob_name TEXT,
+    event_type VARCHAR(50),
+    status VARCHAR(20),
+    retry_count INTEGER DEFAULT 0,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
+Step 7: Create GCP Service Account (already discussed)
+
+
+
+Shell
+gcloud iam service-accounts create azure-to-gcs-sa \
+    --display-name="Azure To GCS Service Account"
+Grant:
+
+
+
+
+Shell
+gcloud storage buckets add-iam-policy-binding \
+gs://highradius-poc-gcs-blobstorage \
+--member="serviceAccount:azure-to-gcs-sa@gcp-poc-501612.iam.gserviceaccount.com" \
+--role="roles/storage.objectAdmin"
+Generate key and copy it to:
+
+
+
+
+Plain Text
+/opt/blob-to-gcs/azure-to-gcs-sa-key.json
+Step 8: Create Environment File
+
+
+
+Shell
+nano /opt/blob-to-gcs/.env
+
+
+
+INI
+AZURE_STORAGE_ACCOUNT=hirteststoragemigration
+ 
+AZURE_STORAGE_KEY=<REDACTED>
+ 
+AZURE_QUEUE_NAME=blob-sync-events
+ 
+GCP_BUCKET=highradius-poc-gcs-blobstorage
+ 
+GOOGLE_APPLICATION_CREDENTIALS=/opt/blob-to-gcs/azure-to-gcs-sa-key.json
+ 
+PGHOST=localhost
+PGPORT=5432
+ 
+PGDATABASE=gcssync
+ 
+PGUSER=gcssync
+ 
+PGPASSWORD=<REDACTED>
+ 
+WORKERS=8
+
+Show more lines
+Step 9: Build Queue Listener
+The listener should:
+
+BlobCreated
+
+
+
+Plain Text
+Read Queue Event
+       ↓
+Download Blob
+       ↓
+Upload To GCS
+       ↓
+Update PostgreSQL
+BlobDeleted
+
+
+
+Plain Text
+Read Queue Event
+       ↓
+Delete Object In GCS
+       ↓
+Update PostgreSQL
+DirectoryCreated
+
+
+
+Plain Text
+Log Event
+DirectoryDeleted
+
+
+
+Plain Text
+Log Event
+BlobRenamed
+
+
+
+Plain Text
+Copy New Name
+Delete Old Name
+DirectoryRenamed
+
+
+
+Plain Text
+Record Rename Event
+Step 10: Create systemd Service
+
+
+
+Shell
+sudo nano /etc/systemd/system/blob-to-gcs.service
+
+
+
+INI
+[Unit]
+Description=Azure Blob To GCS Sync
+After=network.target
+ 
+[Service]
+Type=simple
+ 
+User=trianzadmin
+ 
+WorkingDirectory=/opt/blob-to-gcs
+ 
+EnvironmentFile=/opt/blob-to-gcs/.env
+ 
+ExecStart=/opt/blob-to-gcs/venv/bin/python \
+/opt/blob-to-gcs/listener.py
+ 
+Restart=always
+ 
+RestartSec=10
+ 
+[Install]
+WantedBy=multi-user.target
+
+Show more lines
+Enable:
+
+
+
+
+Shell
+sudo systemctl daemon-reload
+ 
+sudo systemctl enable blob-to-gcs
+ 
+sudo systemctl start blob-to-gcs
+Validation
+Upload:
+
+
+
+
+Plain Text
+sample.txt
+to:
+
+
+
+
+Plain Text
+testcontainer
+Verify:
+
+
+
+
+Shell
+gcloud storage ls \
+gs://highradius-poc-gcs-blobstorage
+Expected:
+
+
+
+
+Plain Text
+sample.txt
+The next major deliverable is the full listener.py for Azure Queue → PostgreSQL → GCS, including handling all 6 Event Grid event types.
+
+
+
+
+
+You said:
+
+Copilot said:
+On this screen, for the architecture we've selected:
+
+
+
+
+Plain Text
+Azure Blob
+    ↓
+Event Grid
+    ↓
+Storage Queue (blob-sync-events)
+    ↓
+Listener VM
+    ↓
+PostgreSQL
+    ↓
+Google Cloud Storage
+you should choose:
+
+
+
+
+Plain Text
+Endpoint Type = Storage Queue
+From the dropdown, select:
+
+
+
+
+Plain Text
+Storage Queue
+Then Azure will ask for:
+
+
+
+
+Plain Text
+Storage Account
+Select:
+
+
+
+
+Plain Text
+hirteststoragemigration
+Then:
+
+
+
+
+Plain Text
+Queue
+Select:
+
+
+
+
+Plain Text
+blob-sync-events
+Final Production Configuration
+Event Subscription Name
+
+
+
+Plain Text
+blob-to-gcs-eventgrid
+Event Schema
+
+
+
+Plain Text
+Event Grid Schema
+Event Types
+Client requirement:
+
+
+
+
+Plain Text
+✅ Blob Created
+✅ Blob Deleted
+✅ Directory Created
+✅ Directory Deleted
+✅ Blob Renamed
+✅ Directory Renamed
+Filters
+Recommended:
+
+
+
+
+Plain Text
+Subject Begins With
+ 
+/blobServices/default/containers/testcontainer/
+Dead Lettering
+
+
+
+Plain Text
+✅ Enabled
+Dead Letter Container:
+
+
+
+
+Plain Text
+eventgrid-deadletter
+Retry Policy
+
+
+
+Plain Text
+✅ Enabled
+ 
+Max Delivery Attempts: 30
+ 
+TTL: 1440 Minutes
+Expiration
+
+
+
+Plain Text
+❌ Disabled
+Delivery Properties
+
+
+
+Plain Text
+Leave Empty
+Endpoint Type
+
+
+
+Plain Text
+✅ Storage Queue
+Queue Destination
+
+
+
+Plain Text
+Storage Account:
+hirteststoragemigration
+ 
+Queue:
+blob-sync-events
+After Clicking Create
+The flow becomes:
+
+
+
+
+Plain Text
+Azure Blob (testcontainer)
+          │
+          ▼
+Event Grid
+          │
+          ▼
+Storage Queue
+(blob-sync-events)
+          │
+          ▼
+Azure VM Listener
+(blob-to-gcs)
+          │
+          ▼
+PostgreSQL
+(blob_events)
+          │
+          ▼
+Google Cloud Storage
+(highradius-poc-gcs-blobstorage)
+
+Show more lines
+Once the Event Subscription is created successfully, the next step is:
+
+
+
+
+Plain Text
+Build Azure VM Listener
+and I'll give you:
+
+PostgreSQL blob_events table
+.env
+Full listener.py
+Complete systemd service
+Validation procedure
+for the rollback architecture.
+
+
+
+
+
+You said:
+
+Copilot said:
+This screen looks correct. ✅
+
+For your enterprise rollback architecture, I would use the following settings:
+
+Endpoint Details
+
+
+
+Plain Text
+Endpoint Type:
+Storage Queue ✅
+ 
+Queue:
+blob-sync-events ✅
+Cross-Tenant Delivery
+
+
+
+Plain Text
+Disabled ✅
+Keep it disabled unless the storage account and queue are in different Azure tenants.
+
+Managed Identity for Delivery
+Current:
+
+
+
+
+Plain Text
+Managed Identity Type:
+None
+For your design:
+
+
+
+
+Plain Text
+Azure Blob
+    ↓
+Event Grid
+    ↓
+Storage Queue
+    ↓
+Azure VM Listener
+Keep it as:
+
+
+
+
+Plain Text
+None ✅
+Because Event Grid can write directly to the Storage Queue in the same subscription without requiring a managed identity.
+
+Event Types Selected
+You mentioned the client wants all six:
+
+
+
+
+Plain Text
+✅ Blob Created
+✅ Blob Deleted
+✅ Directory Created
+✅ Directory Deleted
+✅ Blob Renamed
+✅ Directory Renamed
+That's acceptable, provided the listener handles each event type appropriately.
+
+Before Clicking Create
+Verify:
+
+
+
+
+Plain Text
+Name:
+blob-to-gcs-eventgrid
+ 
+Event Schema:
+Event Grid Schema
+ 
+Events:
+6 selected
+ 
+Endpoint Type:
+Storage Queue
+ 
+Queue:
+blob-sync-events
+ 
+Managed Identity:
+None
+ 
+Dead Lettering:
+Enabled
+ 
+Retry Policy:
+30 attempts
+ 
+TTL:
+1440 minutes
+ 
+Expiration:
+Disabled
+
+Show more lines
+What Happens Next
+After you click Create:
+
+
+
+
+Plain Text
+Azure Blob
+       ↓
+Event Grid
+       ↓
+blob-sync-events Queue
+The next implementation step will be:
+
+Build Queue Consumer
+We'll create:
+
+
+
+
+Plain Text
+/opt/blob-to-gcs
+and then:
+
+
+
+
+Plain Text
+listener.py
+that:
+
+Polls Azure Storage Queue
+Reads Event Grid messages
+Handles all 6 event types
+Writes audit records to PostgreSQL (blob_events)
+Uploads files to GCS
+Deletes files from GCS when needed
+Runs as a systemd service
+That listener implementation is the next major deliverable after this Event Grid subscription is created successfully.
+
+
+
+
+
+You said:
+
+still create option not highlight 
+Copilot said:
+The Create button is still disabled because one of the required fields on another tab is not valid or not completed.
+
+From your screenshot, the most likely causes are:
+
+1. System Topic Name (Most Common)
+Scroll back to the Basics tab and check:
+
+
+
+
+Plain Text
+System Topic Name *
+Make sure it contains a value, for example:
+
+
+
+
+Plain Text
+blob-sync-system-topic
+or
+
+
+
+
+Plain Text
+hirteststoragemigration-events
+This field is mandatory.
+
+2. Filters Tab
+Since you selected all 6 event types, go to:
+
+
+
+
+Plain Text
+Filters
+Verify there are no validation errors.
+
+Recommended:
+
+
+
+
+Plain Text
+Subject Begins With:
+/blobServices/default/containers/testcontainer/
+If a filter value is partially entered or invalid, Azure disables Create.
+
+3. Additional Features Tab
+You enabled:
+
+
+
+
+Plain Text
+Configure Retry Policies
+Check the Event Time To Live fields.
+
+The screenshot earlier showed:
+
+
+
+
+Plain Text
+Days    = 0
+Hours   = (blank)
+Minutes = 1440
+Seconds = 0
+This can cause validation issues.
+
+Set:
+
+
+
+
+Plain Text
+Days    = 1
+Hours   = 0
+Minutes = 0
+Seconds = 0
+Or:
+
+
+
+
+Plain Text
+Days    = 0
+Hours   = 24
+Minutes = 0
+Seconds = 0
+depending on what Azure accepts in your portal version.
+
+4. Expiration Time
+Make sure:
+
+
+
+
+Plain Text
+Enable expiration time
+is unchecked.
+
+Production subscriptions should not expire automatically.
+
+5. Endpoint Validation
+Confirm:
+
+
+
+
+Plain Text
+Endpoint Type:
+Storage Queue
+ 
+Endpoint:
+blob-sync-events
+If the queue was recently created, click:
+
+
+
+
+Plain Text
+change
+and reselect the queue.
+
+Quick Check
+Go back through the tabs in this order:
+
+
+
+
+Plain Text
+Basics
+ ↓
+Filters
+ ↓
+Additional Features
+ ↓
+Delivery Properties
+Look for any red asterisks (*) or red validation messages.
+
+The two fields most likely blocking Create are:
+
+
+
+
+Plain Text
+System Topic Name
+or
+
+
+
+
+Plain Text
+Event Time To Live
+Tell me:
+
+
+
+
+Plain Text
+What value is in System Topic Name?
+and whether Enable expiration time is currently checked or unchecked, and I'll pinpoint the exact issue.
+
+
+
+
+
+You said:
+
+Copilot said:
+The Basics tab looks valid.
+
+The reason Create is still disabled is almost certainly on one of the other tabs:
+
+Filters
+Additional Features
+Delivery Properties
+Based on your earlier screenshot, the most likely issue is still in Additional Features.
+
+Check 1: Event Subscription Expiration Time
+Go to Additional Features and make sure:
+
+
+
+
+Plain Text
+Enable expiration time
+is unchecked.
+
+For production:
+
+
+
+
+Plain Text
+❌ Disable expiration time
+If it remains enabled, Azure may require a valid future timestamp and can block creation.
+
+Check 2: Event Time To Live
+If Retry Policies are enabled, verify the TTL fields are valid.
+
+Recommended:
+
+
+
+
+Plain Text
+Maximum Delivery Attempts: 30
+
+
+
+Plain Text
+Days: 1
+Hours: 0
+Minutes: 0
+Seconds: 0
+Avoid:
+
+
+
+
+Plain Text
+Days: 0
+Minutes: 1440
+Some portal versions accept it, some trigger validation issues.
+
+Check 3: Filters Tab
+Open Filters.
+
+Verify:
+
+
+
+
+Plain Text
+Subject Begins With
+contains a valid path, for example:
+
+
+
+
+Plain Text
+/blobServices/default/containers/testcontainer/
+or leave it completely blank.
+
+Do not leave a partially entered value.
+
+Check 4: Storage Queue Permissions
+Sometimes Event Grid cannot validate the queue endpoint if queue permissions aren't resolved yet.
+
+Click:
+
+
+
+
+Plain Text
+change
+next to:
+
+
+
+
+Plain Text
+blob-sync-events
+and reselect:
+
+
+
+
+Plain Text
+Storage Account:
+hirteststoragemigration
+ 
+Queue:
+blob-sync-events
+Quickest Way to Find the Error
+Go through the tabs:
+
+
+
+
+Plain Text
+Basics
+Filters
+Additional Features
+Delivery Properties
+and look for:
+
+Red text
+Red borders
+Red asterisks with warnings
+Azure usually marks the exact field preventing creation.
+
+Send Screenshots
+Please send screenshots of:
+
+Filters
+Additional Features
+Delivery Properties
+and I'll pinpoint exactly what's blocking the Create button.
+
+
+
+
+
+You said:
+Dead-Lettering
+Save events that cannot be delivered to storage. Learn more 
+Enable dead-lettering
+Cross-tenant delivery
+Disabled
+Storage Subscription
+HiRAzurePOC2026
+Storage Blob Container
+eventgrid-deadletter
+ (change) 
+Managed Identity for Dead-Letter
+Managed identity type
+None
+Retry Policies
+Customize how many times and for how long event delivery will be retried. Learn more 
+Configure Retry Policies
+Events will be dead-lettered or discarded after either the number of delivery attempts is exceeded or the time to live has elapsed.
+Max Event Delivery Attempts
+Event Time to Live
+Days
+Hours
+Minutes
+Seconds
+Event Subscription Expiration Time
+Set a time at which the event subscription will automatically be deleted.
+Enable expiration time
+Labels
+Set metadata on this event subscription that is only visible through this experience. The metadata (labels) set does not affect the data plane behavior in any way. For example, labels do not show anywhere in the request or in the events that are sent to subscribers.
+
+
+
+Copilot said:
+I found the issue. ✅
+
+The Create button is disabled because under Retry Policies, you've enabled:
+
+
+
+
+Plain Text
+Configure Retry Policies
+but you haven't filled the required values:
+
+
+
+
+Plain Text
+Max Event Delivery Attempts
+Event Time to Live
+Azure treats these as mandatory when retry policies are enabled.
+
+Recommended Values
+Max Event Delivery Attempts
+
+
+
+Plain Text
+30
+Event Time To Live
+Set:
+
+
+
+
+Plain Text
+Days    = 1
+Hours   = 0
+Minutes = 0
+Seconds = 0
+This gives:
+
+
+
+
+Plain Text
+24 Hours
+which is a good production value.
+
+Event Subscription Expiration Time
+Make sure:
+
+
+
+
+Plain Text
+Enable expiration time
+is:
+
+
+
+
+Plain Text
+❌ Unchecked
+Do not enable expiration in production.
+
+Dead Lettering
+Current values are good:
+
+
+
+
+Plain Text
+✅ Enable dead-lettering
+ 
+Container:
+eventgrid-deadletter
+ 
+Managed Identity:
+None
+Labels (Optional)
+You can add:
+
+
+
+
+Plain Text
+Application = HighRadius
+Environment = Production
+Component = BlobToGCSRollback
+but these are optional and do not affect functionality.
+
+Final Additional Features Configuration
+
+
+
+Plain Text
+Enable dead-lettering          = Yes
+Dead Letter Container          = eventgrid-deadletter
+ 
+Configure Retry Policies       = Yes
+ 
+Max Delivery Attempts          = 30
+ 
+Event Time To Live
+Days                           = 1
+Hours                          = 0
+Minutes                        = 0
+Seconds                        = 0
+ 
+Enable Expiration Time         = No
+After entering the retry values, the Create button should become active.
+
+Once the Event Grid Subscription is created successfully, we'll move to:
+
+
+
+
+Plain Text
+Step 3: Create GCP Service Account
+ 
+azure-to-gcs-sa
+and continue building the rollback path:
+
+
+
+
+Plain Text
+Azure Blob
+ ↓
+Event Grid
+ ↓
+Storage Queue
+ ↓
+Listener VM
+ ↓
+PostgreSQL
+ ↓
+Google Cloud Storage
+
+
+
+
+
+
+
+Message Copilot
+
+
+AI-generated content may be incorrect
+https://copilot.cloud.microsoft/chat/conversation/0f536a19-348d-47a1-b6b5-02c9bd8c9185?fromCode=cmcv2&redirectId=788F9C6047654C1A991550D8E35B3042
+
