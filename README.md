@@ -3311,3 +3311,845 @@ Message Copilot
 AI-generated content may be incorrect
 https://copilot.cloud.microsoft/chat/conversation/0f536a19-348d-47a1-b6b5-02c9bd8c9185?fromCode=cmcv2&redirectId=788F9C6047654C1A991550D8E35B3042
 
+BLOB BLOB BLOB BLOB
+
+
+
+You said:
+(venv) trianzadmin@gcstoblobstorage:/opt/blob-to-gcs$ journalctl -u blob-to-gcs -n 100 --no-pager
+-- No entries --
+(venv) trianzadmin@gcstoblobstorage:/opt/blob-to-gcs$
+Copilot said:
+That output is actually very revealing:
+
+
+
+
+Plain Text
+journalctl -u blob-to-gcs -n 100 --no-pager
+ 
+-- No entries --
+What it means
+Your service is not running under systemd yet, or the service has never been started successfully.
+
+So right now there are two different things:
+
+✅ Queue contains the BlobDeleted event (Messages: 1)
+❌ There are no blob-to-gcs service logs
+That means we should stop looking at the Event Grid side for now and verify the service.
+
+Check if the service exists
+Run:
+
+
+
+
+Shell
+sudo systemctl status blob-to-gcs
+Paste the output.
+
+Check if the service file exists
+Run:
+
+
+
+
+Shell
+ls -l /etc/systemd/system/blob-to-gcs.service
+If service exists, reload and start it
+
+
+
+Shell
+sudo systemctl daemon-reload
+ 
+sudo systemctl enable blob-to-gcs
+ 
+sudo systemctl start blob-to-gcs
+Then:
+
+
+
+
+Shell
+sudo systemctl status blob-to-gcs
+If service is running, view logs
+
+
+
+Shell
+journalctl -u blob-to-gcs -f
+At that point we should see messages such as:
+
+
+
+
+Plain Text
+Starting Azure Blob -> GCS listener
+or an error/traceback.
+
+Important Finding So Far
+We already proved:
+
+✅ rollback.txt delete event reached the queue
+
+
+
+
+JSON
+"eventType":"Microsoft.Storage.BlobDeleted"
+✅ Queue has pending messages
+
+
+
+
+Plain Text
+Messages: 1
+✅ PostgreSQL did not receive a BlobDeleted record
+
+Therefore the event is sitting unprocessed.
+
+That strongly suggests either:
+
+
+
+
+Plain Text
+blob_to_gcs_listener.py is not running
+or
+
+
+
+
+Plain Text
+blob_to_gcs_listener.py is crashing before processing the delete event
+The next command that will tell us exactly where we are is:
+
+
+
+
+Shell
+sudo systemctl status blob-to-gcs
+Please run that and paste the output.
+
+
+
+
+
+You said:
+(venv) trianzadmin@gcstoblobstorage:/opt/blob-to-gcs$ journalctl -u blob-to-gcs -n 100 --no-pager
+-- No entries --
+(venv) trianzadmin@gcstoblobstorage:/opt/blob-to-gcs$ sudo systemctl status blob-to-gcs
+○ blob-to-gcs.service - Azure Blob To GCS Sync
+     Loaded: loaded (/etc/systemd/system/blob-to-gcs.service; disabled; preset: enabled)
+     Active: inactive (dead)
+(venv) trianzadmin@gcstoblobstorage:/opt/blob-to-gcs$ sudo systemctl start blob-to-gcs
+(venv) trianzadmin@gcstoblobstorage:/opt/blob-to-gcs$ sudo systemctl status blob-to-gcs
+● blob-to-gcs.service - Azure Blob To GCS Sync
+     Loaded: loaded (/etc/systemd/system/blob-to-gcs.service; disabled; preset: enabled)
+     Active: active (running) since Fri 2026-09-18 10:00:16 UTC; 1s ago
+   Main PID: 23528 (python)
+      Tasks: 9 (limit: 4598)
+     Memory: 50.2M (peak: 50.5M)
+        CPU: 908ms
+     CGroup: /system.slice/blob-to-gcs.service
+             └─23528 /opt/blob-to-gcs/venv/bin/python /opt/blob-to-gcs/blob_to_gcs_listener.py
+
+
+Sep 18 10:00:17 gcstoblobstorage python[23528]: 2026-09-18 10:00:17,991 INFO ThreadPoolExecutor-0_2 Response status: 200
+Sep 18 10:00:17 gcstoblobstorage python[23528]: Response headers:
+Sep 18 10:00:17 gcstoblobstorage python[23528]:     'Cache-Control': 'no-cache'
+Sep 18 10:00:17 gcstoblobstorage python[23528]:     'Transfer-Encoding': 'chunked'
+Sep 18 10:00:17 gcstoblobstorage python[23528]:     'Content-Type': 'application/xml'
+Sep 18 10:00:17 gcstoblobstorage python[23528]:     'Server': 'Windows-Azure-Queue/1.0 Microsoft-HTTPAPI/2.0'
+Sep 18 10:00:17 gcstoblobstorage python[23528]:     'x-ms-request-id': '61c11063-b003-0085-5854-475e77000000'
+Sep 18 10:00:17 gcstoblobstorage python[23528]:     'x-ms-client-request-id': 'c08f985e-b347-11f1-8cdb-e4fb1eff1455'
+Sep 18 10:00:17 gcstoblobstorage python[23528]:     'x-ms-version': 'REDACTED'
+Sep 18 10:00:17 gcstoblobstorage python[23528]:     'Date': 'Fri, 18 Sep 2026 10:00:17 GMT'
+(venv) trianzadmin@gcstoblobstorage:/opt/blob-to-gcs$
+
+Copilot said:
+Excellent. ✅ We now know exactly why the delete wasn't working before.
+
+What happened
+Before:
+
+
+
+
+Plain Text
+blob-to-gcs service = Inactive (dead)
+So:
+
+
+
+
+Plain Text
+BlobCreated events
+    → were processed manually
+ 
+BlobDeleted events
+    → stayed in the queue
+Now:
+
+
+
+
+Plain Text
+blob-to-gcs service = Active (running)
+and the queue still had:
+
+
+
+
+Plain Text
+Messages: 1
+which was your rollback.txt delete event.
+
+Next thing to check
+Wait 30-60 seconds and run:
+
+
+
+
+SQL
+SELECT
+    blob_name,
+    event_type,
+    status,
+    error_message,
+    created_at
+FROM blob_events
+ORDER BY created_at DESC
+LIMIT 20;
+I'm expecting a new row like:
+
+
+
+
+Plain Text
+rollback.txt | Microsoft.Storage.BlobDeleted | COMPLETED
+If you see that row, then the listener consumed the Event Grid delete message successfully.
+
+Check GCS
+Run:
+
+
+
+
+Shell
+gcloud storage ls gs://highradius-poc-gcs-blobstorage/rollback.txt
+Expected if everything worked
+
+
+
+Plain Text
+Listed 0 items.
+or
+
+
+
+
+Plain Text
+Object not found
+If file still exists
+Then we'll inspect:
+
+
+
+
+Shell
+journalctl -u blob-to-gcs -n 100 --no-pager
+and specifically look for:
+
+
+
+
+Plain Text
+BlobDeleted
+FAILED
+or a traceback.
+
+Also verify queue is empty now
+Run:
+
+
+
+
+Shell
+python /tmp/check_queue.py
+Expected:
+
+
+
+
+Plain Text
+Messages: 0
+If it becomes 0, we know the delete message was consumed.
+
+Summary
+Current status:
+
+✅ Azure Blob → Event Grid works
+✅ Event Grid → Queue works
+✅ Queue contains delete event
+✅ blob-to-gcs service is now running
+✅ PostgreSQL is working
+✅ GCS upload works
+
+Now we only need to verify:
+
+
+
+
+Plain Text
+BlobDeleted
+     ↓
+Consumed from Queue
+     ↓
+PostgreSQL Row
+     ↓
+GCS File Removed
+Run these three checks:
+
+
+
+
+SQL
+SELECT
+    blob_name,
+    event_type,
+    status
+FROM blob_events
+ORDER BY created_at DESC
+LIMIT 20;
+
+
+
+Shell
+gcloud storage ls gs://highradius-poc-gcs-blobstorage/rollback.txt
+
+
+
+Shell
+python /tmp/check_queue.py
+and share the outputs. That will confirm whether the rollback delete path is fully working. 🚀
+
+
+
+
+
+You said:
+some 1kb files up to 20 mb uploaded in azure blob storage can we check flow
+Copilot said:
+Yes ✅. Since your reverse listener and PostgreSQL are working, the easiest way to validate the full flow is to upload a batch of files (1 KB → 20 MB) into Azure Blob and then track them through all layers.
+
+Validation Flow
+
+
+
+Plain Text
+Azure Blob
+    ↓
+Event Grid
+    ↓
+Storage Queue
+(blob-sync-events)
+    ↓
+blob_to_gcs_listener.py
+    ↓
+PostgreSQL
+(blob_events)
+    ↓
+GCS
+(highradius-poc-gcs-blobstorage)
+1. Upload Test Files
+Upload a mix of files:
+
+
+
+
+Plain Text
+1KB_1.txt
+1KB_2.txt
+10MB_1.bin
+20MB_1.bin
+into:
+
+
+
+
+Plain Text
+Storage Account:
+hirteststoragemigration
+ 
+Container:
+testcontainer
+2. Check Queue Growth
+Run on VM:
+
+
+
+
+Shell
+python /tmp/check_queue.py
+Expected initially:
+
+
+
+
+Plain Text
+Messages: 5
+Messages: 10
+Messages: 20
+depending on uploads.
+
+After processing:
+
+
+
+
+Plain Text
+Messages: 0
+3. Monitor Listener
+
+
+
+Shell
+journalctl -u blob-to-gcs -f
+Expected:
+
+
+
+
+Plain Text
+BlobCreated
+ 
+SOURCE=...
+ 
+COMPLETED
+For larger files:
+
+
+
+
+Plain Text
+1MB
+5MB
+10MB
+20MB
+you should see longer processing times.
+
+4. Check PostgreSQL
+Connect:
+
+
+
+
+Shell
+sudo -u postgres psql -d gcssync
+Check totals:
+
+
+
+
+SQL
+SELECT
+    status,
+    count(*)
+FROM blob_events
+GROUP BY status;
+Expected:
+
+
+
+
+Plain Text
+COMPLETED
+Check recent files:
+
+
+
+
+SQL
+SELECT
+    blob_name,
+    event_type,
+    status,
+    created_at
+FROM blob_events
+ORDER BY created_at DESC
+LIMIT 50;
+Expected:
+
+
+
+
+Plain Text
+1KB_1.txt
+10MB_1.bin
+20MB_1.bin
+ 
+Microsoft.Storage.BlobCreated
+ 
+COMPLETED
+5. Verify GCS Bucket
+Count files:
+
+
+
+
+Shell
+gcloud storage ls \
+gs://highradius-poc-gcs-blobstorage/** | wc -l
+Check specific file:
+
+
+
+
+Shell
+gcloud storage ls \
+gs://highradius-poc-gcs-blobstorage/20MB_1.bin
+Expected:
+
+
+
+
+Plain Text
+gs://highradius-poc-gcs-blobstorage/20MB_1.bin
+6. Verify Integrity
+Download file from GCS:
+
+
+
+
+Shell
+gcloud storage cp \
+gs://highradius-poc-gcs-blobstorage/20MB_1.bin .
+Check size:
+
+
+
+
+Shell
+ls -lh 20MB_1.bin
+Compare with Azure source file size.
+
+7. Throughput Validation
+Monitor VM:
+
+
+
+
+Shell
+top
+or:
+
+
+
+
+Shell
+htop
+Check:
+
+
+
+
+Plain Text
+CPU
+Memory
+Load Average
+For your VM:
+
+
+
+
+Plain Text
+Standard_B2als_v2
+Current recommendation:
+
+
+
+
+INI
+WORKERS=8
+If processing remains smooth:
+
+✅ keep WORKERS=8
+
+If queue grows faster than consumption:
+
+✅ increase VM size ✅ later increase WORKERS
+
+Success Criteria
+You can consider rollback replication validated when:
+
+
+
+
+Plain Text
+✅ File uploaded to Blob
+✅ Queue receives event
+✅ Listener processes event
+✅ PostgreSQL row created
+✅ Status = COMPLETED
+✅ File exists in GCS
+For delete validation:
+
+
+
+
+Plain Text
+✅ File deleted in Blob
+✅ BlobDeleted event received
+✅ PostgreSQL row created
+✅ File removed from GCS
+I would test:
+
+
+
+
+Plain Text
+10 x 1KB files
+10 x 1MB files
+5 x 10MB files
+2 x 20MB files
+first, verify PostgreSQL shows COMPLETED for all, then move to larger bulk-volume testing.
+
+
+
+
+
+You said:
+
+Copilot said:
+This screenshot is actually very encouraging. ✅
+
+What the screenshot proves
+You copied 1008 files to Azure Blob:
+
+
+
+
+Plain Text
+Transferred: 1008 / 1008, 100%
+Elapsed time: 32.0s
+Total data:
+
+
+
+
+Plain Text
+19.573 MiB
+Average throughput:
+
+
+
+
+Plain Text
+1.145 MiB/s
+Files transferred include:
+
+
+
+
+Plain Text
+testfile_980.txt
+testfile_981.txt
+testfile_982.txt
+...
+testfile_999.txt
+What should happen now?
+Those uploads should generate:
+
+
+
+
+Plain Text
+BlobCreated
+events.
+
+Flow:
+
+
+
+
+Plain Text
+Azure Blob
+        ↓
+Event Grid
+        ↓
+Storage Queue
+(blob-sync-events)
+        ↓
+blob_to_gcs_listener.py
+        ↓
+PostgreSQL
+(blob_events)
+        ↓
+Google Cloud Storage
+Validation 1
+Check queue size:
+
+
+
+
+Shell
+python /tmp/check_queue.py
+Expected:
+
+
+
+
+Plain Text
+Messages: 1008
+or some number that gradually decreases while the listener processes files.
+
+Validation 2
+Check Listener Service
+
+
+
+
+Shell
+sudo systemctl status blob-to-gcs
+Expected:
+
+
+
+
+Plain Text
+active (running)
+Validation 3
+Watch processing
+
+
+
+
+Shell
+journalctl -u blob-to-gcs -f
+Expected:
+
+
+
+
+Plain Text
+BlobCreated
+Processing testfile_980.txt
+COMPLETED
+Validation 4
+Check PostgreSQL
+
+
+
+
+Shell
+sudo -u postgres psql -d gcssync
+
+
+
+SQL
+SELECT
+    count(*)
+FROM blob_events;
+Expected:
+
+
+
+
+Plain Text
+1008+
+Check completed:
+
+
+
+
+SQL
+SELECT
+    status,
+    count(*)
+FROM blob_events
+GROUP BY status;
+Expected:
+
+
+
+
+Plain Text
+COMPLETED
+Validation 5
+Check GCS
+
+From Cloud Shell:
+
+
+
+
+Shell
+gcloud storage ls gs://highradius-poc-gcs-blobstorage/ | grep testfile_
+Or count:
+
+
+
+
+Shell
+gcloud storage ls gs://highradius-poc-gcs-blobstorage/** | wc -l
+What I Would Measure
+PostgreSQL
+
+
+
+SQL
+SELECT
+    count(*)
+FROM blob_events
+WHERE status='COMPLETED';
+Queue Backlog
+
+
+
+Shell
+python /tmp/check_queue.py
+GCS Count
+
+
+
+Shell
+gcloud storage ls gs://highradius-poc-gcs-blobstorage/** | wc -l
+Success Criteria
+For your 1008 file test:
+
+
+
+
+Plain Text
+Uploaded to Azure Blob     = 1008
+Queue Events               = 1008
+PostgreSQL Completed       = 1008
+Files in GCS               = 1008
+If those numbers match, you've proven:
+
+✅ High-volume upload works
+✅ Event Grid scales
+✅ Queue scales
+✅ PostgreSQL audit tracking works
+✅ Azure Blob → GCS rollback path works
+✅ Enterprise rollback architecture is functioning end-to-end
+
+This is exactly the kind of bulk test I would run during Hypercare validation. 🚀
+
+
+
+
+
+
+
+How to automate the full validation?
+
+What if some files are missing in GCS?
+
+How to verify each file individually?
+
+
+
+
