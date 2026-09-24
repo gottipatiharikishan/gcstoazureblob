@@ -4167,3 +4167,699 @@ How to verify each file individually?
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+**Multiple Buckets configruation Runbook required -->**
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Work
+Harikishan
+M365 Copilot (Basic)
+
+
+
+Auto
+
+
+You said:
+trianzadmin@gcstoblobstorage:~$ grep -R "BUCKET_CONTAINER_MAP" /opt/gcs-azure-sync
+grep: /opt/gcs-azure-sync/__pycache__/listener.cpython-312.pyc: binary file matches
+trianzadmin@gcstoblobstorage:~$
+Copilot said:
+Perfect ✅
+
+This output tells us the source code no longer contains BUCKET_CONTAINER_MAP:
+
+
+
+
+Shell
+ 
+The only remaining reference is in:
+
+
+
+
+Plain Text
+ 
+which is an old compiled Python cache file.
+
+Clean the cache
+Run:
+
+
+
+
+Shell
+ 
+or
+
+
+
+
+Shell
+ 
+Recompile
+
+
+
+Shell
+ 
+Expected:
+
+
+
+
+Plain Text
+ 
+Verify service
+Stop everything:
+
+
+
+
+Shell
+ 
+Start fresh:
+
+
+
+
+Shell
+ 
+Check:
+
+
+
+
+Shell
+ 
+Watch logs
+
+
+
+Shell
+ 
+You should no longer see:
+
+
+
+
+Plain Text
+ 
+Final verification
+Check the 3 critical lines:
+
+
+
+
+Shell
+ 
+Expected:
+
+
+
+
+Python
+ 
+and:
+
+
+
+
+Shell
+ 
+Expected:
+
+
+
+
+Python
+ 
+Once the service starts successfully, you'll be back to the original working configuration:
+
+
+
+
+Plain Text
+ 
+and then we can plan the 10-bucket enhancement properly instead of modifying the live listener incrementally.
+
+
+
+You said:
+trianzadmin@gcstoblobstorage:~$ grep -n "SOURCE_BUCKET\|TARGET_CONTAINER" /opt/gcs-azure-sync/listener.py
+17:SOURCE_BUCKET = os.environ["SOURCE_BUCKET"]
+20:TARGET_CONTAINER = os.environ["TARGET_CONTAINER"]
+149:    dst = f"{TARGET_REMOTE}:{TARGET_CONTAINER}/{obj}"
+205:    dst = f"{TARGET_REMOTE}:{TARGET_CONTAINER}/{obj}"
+300:    if bucket != SOURCE_BUCKET:
+trianzadmin@gcstoblobstorage:~$
+
+Copilot said:
+Excellent ✅
+
+Your listener is now back to the original single-bucket configuration:
+
+
+
+
+Python
+ 
+This matches your .env:
+
+
+
+
+Python
+env isn’t fully supported. Syntax highlighting is based on Python.
+
+ 
+Validate Syntax
+Run:
+
+
+
+
+Shell
+ 
+If there is no output, the script is syntactically correct.
+
+Clean Restart
+
+
+
+Shell
+ 
+Check:
+
+
+
+
+Shell
+ 
+Expected:
+
+
+
+
+Plain Text
+ 
+Verify Logs
+
+
+
+Shell
+ 
+You should no longer see:
+
+
+
+
+Plain Text
+ 
+or
+
+
+
+
+Plain Text
+ 
+Test Sync
+Create a test file:
+
+
+
+
+Shell
+ 
+Watch logs and verify Azure:
+
+
+
+
+Shell
+ 
+Regarding the 10-Bucket Runbook
+Do not implement the 10-bucket listener changes directly on this working instance.
+
+Current state:
+
+
+
+
+Plain Text
+ 
+is healthy.
+
+For the 10-bucket requirement, create a separate controlled change and update:
+
+.env
+bucket-to-container mapping
+transfer()
+delete_blob()
+process_message()
+together in one deployment.
+
+Right now, the priority is to get:
+
+
+
+
+Shell
+ 
+and
+
+
+
+
+Shell
+ 
+showing clean results. Once that's confirmed, your current sync service is restored.
+
+
+
+You said:
+trianzadmin@gcstoblobstorage:~$ python3 -m py_compile /opt/gcs-azure-sync/listener.py
+Sorry: IndentationError: expected an indented block after function definition on line 203 (listener.py, line 205)trianzadmin@gcstoblobstorage:~$
+Copilot said:
+You're very close. The error is now not related to BUCKET_CONTAINER_MAP anymore. It's a pure Python indentation issue.
+
+Run this exact command:
+
+
+
+
+Shell
+ 
+The compiler error:
+
+
+
+
+Plain Text
+ 
+means your code currently looks something like:
+
+
+
+
+Python
+ 
+or
+
+
+
+
+Python
+ 
+The function body is malformed.
+
+Quick Fix
+Open the file:
+
+
+
+
+Shell
+ 
+Find:
+
+
+
+
+Python
+ 
+and make sure it starts exactly like this:
+
+
+
+
+Python
+ 
+After saving:
+
+
+
+
+Shell
+ 
+If it still errors, paste the output of:
+
+
+
+
+Shell
+ 
+That will show the exact broken indentation and I can tell you the precise lines to fix. The current problem is definitely in the delete_blob() function around lines 203-205.
+
+
+
+You said:
+dmin@gcstoblobstorage:~$ sed -n sed -n '200,215p' /opt/gcs-azure-sync/listener.py
+        )
+
+
+
+
+    def delete_blob(obj):
+
+
+    dst = f"{TARGET_REMOTE}:{TARGET_CONTAINER}/{obj}"
+
+
+    cmd = [
+        RCLONE_BIN,
+        "deletefile",
+        dst,
+        "--config",
+        RCLONE_CONFIG,
+    ]
+
+
+    result = subprocess.run(
+trianzadmin@gcstoblobstorage:~$
+
+Copilot said:
+Found it. The problem is the indentation before def delete_blob(obj):.
+
+Your file currently has:
+
+
+
+
+Python
+ 
+Notice:
+
+
+
+
+Python
+ 
+has 4 leading spaces, which means Python thinks it's inside another block.
+
+Fix
+Edit:
+
+
+
+
+Shell
+ 
+Change:
+
+
+
+
+Python
+ 
+to:
+
+
+
+
+Python
+ 
+(no spaces before def)
+
+And make sure the function body is indented:
+
+
+
+
+Python
+ 
+Verify
+
+
+
+Shell
+ 
+Should look like:
+
+
+
+
+Python
+ 
+Then compile
+
+
+
+Shell
+ 
+If successful, there will be no output.
+
+Restart
+
+
+
+Shell
+ 
+If compilation still fails, send:
+
+
+
+
+Shell
+ 
+and we'll fix the remaining indentation in one shot.
+
+
+
+You said:
+trianzadmin@gcstoblobstorage:~$ sudo vi /opt/gcs-azure-sync/listener.py
+trianzadmin@gcstoblobstorage:~$ python3 -m py_compile /opt/gcs-azure-sync/listener.py
+trianzadmin@gcstoblobstorage:~$
+
+Copilot said:
+Perfect ✅
+
+This result:
+
+
+
+
+Shell
+ 
+returned no output, which means:
+
+✅ Syntax is valid
+✅ Indentation issues fixed
+✅ delete_blob() function fixed
+✅ No Python compile errors
+Now restart the service:
+
+
+
+
+Shell
+ 
+Check status:
+
+
+
+
+Shell
+ 
+Expected:
+
+
+
+
+Plain Text
+ 
+Then monitor logs:
+
+
+
+
+Shell
+ 
+You should no longer see:
+
+
+
+
+Plain Text
+ 
+or
+
+
+
+
+Plain Text
+ 
+Validate End-to-End
+Create a test file:
+
+
+
+
+Shell
+ 
+Verify Azure:
+
+
+
+
+Shell
+ 
+If the file appears, your listener is working again.
+
+Current Status
+Your listener is now restored to:
+
+
+
+
+Plain Text
+ 
+and the failed 10-bucket modifications have been reverted.
+
+Before attempting 10-bucket support again
+Take a backup:
+
+
+
+
+Shell
+ 
+Then implement the multi-bucket changes in a controlled manner rather than changing individual lines on the live script.
+
+For now, the important thing is that the Python script compiles successfully again. ✅
+
+
+
+
+
+
+Message Copilot
+
+
+AI-generated content may be incorrect
+env isn’t fully supported. Syntax highlighting is based on Python..
+
+
+
+
+
+
+
