@@ -4860,6 +4860,15 @@ env isn’t fully supported. Syntax highlighting is based on Python..
 
 
 
+4) In document step 32: rclone copyto have a check on the timeout 3600s - need to validate and change  -->  i already given clarity production will configure timeout 3600s or 7200s based on client data will understand what timeout need to configure. 
+
+5) PostgreSQL Disk size will be 500 GB for 50TB SYNC and 10 TB Incremental, review once again if need to have more disk space  -  
+rclone monitoring script - to be developed for status if there is any network issue, need know until where file copy is completed and what is the next step  --> 
+rclone monitoring script to show the copy time from GCP to Azure and status report, azure to GCP. 
+
+
+
+
 
 
 
