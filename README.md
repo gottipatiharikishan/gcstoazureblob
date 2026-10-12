@@ -4864,7 +4864,66 @@ env isn’t fully supported. Syntax highlighting is based on Python..
 
 5) PostgreSQL Disk size will be 500 GB for 50TB SYNC and 10 TB Incremental, review once again if need to have more disk space  -  
 rclone monitoring script - to be developed for status if there is any network issue, need know until where file copy is completed and what is the next step  --> 
-rclone monitoring script to show the copy time from GCP to Azure and status report, azure to GCP. 
+rclone monitoring script to show the copy time from GCP to Azure and status report, azure to GCP.
+
+
+
+
+
+trianzadmin@gcstoblobstorage:/opt/gcs-azure-sync-v2$ cat recover_stale.sh
+#!/bin/bash
+
+source /opt/gcs-azure-sync-v2/.env
+
+export PGPASSWORD="$PGPASSWORD"
+
+psql \
+-h "$PGHOST" \
+-p "$PGPORT" \
+-U "$PGUSER" \
+-d "$PGDATABASE" <<SQL
+
+UPDATE sync_batches
+SET status='PENDING'
+WHERE status='PROCESSING'
+AND started_at IS NOT NULL
+AND started_at < NOW() - INTERVAL '30 minutes';
+
+UPDATE rollback_batches
+SET status='PENDING'
+WHERE status='PROCESSING'
+AND started_at IS NOT NULL
+AND started_at < NOW() - INTERVAL '30 minutes';
+
+SQL
+trianzadmin@gcstoblobstorage:/opt/gcs-azure-sync-v2$ cat autoscale.sh
+#!/bin/bash
+
+PENDING=$(PGPASSWORD=$PGPASSWORD psql \
+-h 127.0.0.1 \
+-p 5432 \
+-U gcssync \
+-d gcssync \
+-t -c "
+SELECT COUNT(*)
+FROM sync_batches
+WHERE status='PENDING';
+" | xargs)
+
+if [ "$PENDING" -lt 100 ]; then
+    docker-compose -f /opt/gcs-azure-sync-v2/docker-compose.yml up -d --scale worker=10
+
+elif [ "$PENDING" -lt 1000 ]; then
+    docker-compose -f /opt/gcs-azure-sync-v2/docker-compose.yml up -d --scale worker=25
+
+elif [ "$PENDING" -lt 5000 ]; then
+    docker-compose -f /opt/gcs-azure-sync-v2/docker-compose.yml up -d --scale worker=50
+
+else
+    docker-compose -f /opt/gcs-azure-sync-v2/docker-compose.yml up -d --scale worker=100
+
+fi
+trianzadmin@gcstoblobstorage:/opt/gcs-azure-sync-v2$
 
 
 
