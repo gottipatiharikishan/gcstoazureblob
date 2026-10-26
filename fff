@@ -1,0 +1,201 @@
+The attached gcs_azure_migration_schema_v2_prod.sql is a strong starting architecture for production workloads such as 10 TiB and 240M objects, because it stores only several thousand chunks rather than hundreds of millions of object rows. However, do not install it unchanged. Several concurrency and recovery issues could lose incremental events or cause duplicate processing.
+
+What is good for production
+
+The design correctly provides:
+
+buckets for bucket-level configuration and totals
+listing_shards for parallel, resumable GCS listing
+chunks for chunk-level processing, approximately 2,401 rows for 240.009M objects at 100,000 objects per chunk
+FOR UPDATE SKIP LOCKED for concurrent worker claims
+Leases for recovering abandoned work
+dirty_prefixes for aggregated incremental events
+failed_objects for exceptions instead of storing every successful object
+Partitioned attempt and audit history
+bucket_stats so monitoring and autoscaling do not repeatedly scan operational tables
+
+This is far better for production than your removed design, which stored one PostgreSQL row for every object in batch_files and rollback_batch_files.
+
+Must-fix items before installation
+1. Incremental events can be lost
+
+While a prefix is CLAIMED, flush_dirty() continues adding counters, but finish_dirty() resets the complete counters to zero. Events arriving during processing could therefore be erased.
+
+Add claimed snapshots:
+
+ALTER TABLE mig.dirty_prefixes
+ADD COLUMN claimed_upsert_events bigint NOT NULL DEFAULT 0,
+ADD COLUMN claimed_delete_events bigint NOT NULL DEFAULT 0,
+ADD COLUMN claimed_through timestamptz;
+
+
+The claim function must snapshot the counters. The finish function must subtract only those claimed values.
+
+2. Stale workers can complete reclaimed chunks
+
+Chunk ownership is checked only with claimed_by. A restarted container could reuse the same worker name and update a chunk now owned by another process.
+
+Add:
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+ALTER TABLE mig.chunks
+ADD COLUMN lease_token uuid;
+
+
+Every claim must generate a new token:
+
+lease_token = gen_random_uuid()
+
+
+Progress and completion calls must require both chunk_id and lease_token.
+
+3. Failed chunks retry immediately
+
+claim_chunks() can immediately reclaim a failed chunk until max_attempts is reached. During Azure throttling, permission failures, or network outages, this could create a busy retry loop.
+
+Add:
+
+ALTER TABLE mig.chunks
+ADD COLUMN next_retry_at timestamptz;
+
+
+Recommended backoff:
+
+Attempt 1: 1 minute
+Attempt 2: 5 minutes
+Attempt 3: 15 minutes
+Attempt 4: 1 hour
+Attempt 5: 6 hours
+
+4. Chunk split has a concurrency race
+
+split_chunk() uses MAX(seq) + 1. Two simultaneous splits for the same bucket could calculate identical sequence numbers and conflict with the unique constraint.
+
+Add this before calculating MAX(seq):
+
+PERFORM pg_advisory_xact_lock(c.bucket_id::bigint);
+
+5. Chunk uniqueness should include the pass
+
+The table supports pass_no, but its unique constraint is only:
+
+UNIQUE (bucket_id, seq)
+
+
+This can block the reuse of sequence numbers during resynchronization passes.
+
+Change it to:
+
+UNIQUE (bucket_id, pass_no, seq)
+
+6. Add manifest information
+
+The chunk stores only start_key and end_key. For 240M small objects, repeatedly listing GCS ranges during transfer and retries can be expensive.
+
+Add:
+
+ALTER TABLE mig.chunks
+ADD COLUMN manifest_uri text,
+ADD COLUMN manifest_checksum text,
+ADD COLUMN manifest_format text NOT NULL DEFAULT 'JSONL_GZIP';
+
+
+Recommended model:
+
+gs://migration-control/manifests/<bucket-id>/<chunk-id>.jsonl.gz
+
+
+Each compressed manifest should contain object name, generation, size and checksum. PostgreSQL stores only its URI and status.
+
+7. Failed-object identity must include generation
+
+The primary key currently uses only:
+
+(bucket_id, object_key)
+
+
+although the table stores GCS generation. Different generations of the same object name could conflict.
+
+Use:
+
+PRIMARY KEY (bucket_id, object_key, generation)
+
+
+Make generation non-null, or use 0 for sources without version information.
+
+8. Add missing foreign keys
+
+failed_objects.chunk_id, chunk_attempts.chunk_id, and workers.current_chunk are not protected by foreign keys in the attached schema.
+
+Add at least:
+
+ALTER TABLE mig.failed_objects
+ADD CONSTRAINT failed_objects_bucket_fk
+FOREIGN KEY (bucket_id) REFERENCES mig.buckets(bucket_id);
+
+ALTER TABLE mig.failed_objects
+ADD CONSTRAINT failed_objects_chunk_fk
+FOREIGN KEY (chunk_id) REFERENCES mig.chunks(chunk_id);
+
+ALTER TABLE mig.chunk_attempts
+ADD CONSTRAINT chunk_attempts_chunk_fk
+FOREIGN KEY (chunk_id) REFERENCES mig.chunks(chunk_id);
+
+
+For partitioned tables, validate the resulting indexing and deletion behavior in your test database.
+
+Important infrastructure correction
+
+The SQL comments recommend Azure Database for PostgreSQL Flexible Server, PgBouncer port 6432, 4 to 8 vCPU, 32 GB RAM, fewer than 200 connections, synchronous_commit=off, and aggressive rclone concurrency. These are operational suggestions, not universally safe defaults.
+
+For your initial deployment, start with:
+
+Worker containers:       10
+PostgreSQL connections:  30 to 50
+Objects per chunk:       100,000
+Maximum chunk size:      20 to 50 GiB
+Chunk lease:             30 minutes
+Lease renewal:           every 5 minutes
+Stats refresh:           every 60 seconds
+
+
+Increase workers only after monitoring PostgreSQL CPU, storage latency, WAL growth, GCS listing latency, Azure 429/503 responses, and expired leases.
+
+Your next action
+
+Your old gcssync database is deleted. Recreate it, but install this schema first in a dedicated test database:
+
+sudo -u postgres createdb -O gcssync gcssync_v2_test
+
+
+Then run the corrected file:
+
+sudo -u postgres psql \
+  -d gcssync_v2_test \
+  -v ON_ERROR_STOP=1 \
+  -f /opt/gcs-azure-sync-v2/gcs_azure_migration_schema_v2_corrected.sql \
+  2>&1 | tee /opt/gcs-azure-sync-v2/schema_v2_test.log
+
+
+Check for errors:
+
+grep -nEi 'ERROR|FATAL|PANIC' \
+  /opt/gcs-azure-sync-v2/schema_v2_test.log
+
+Final verdict
+
+Yes, this architecture will help production, particularly for 10 TiB and 240M to 500M objects. But the attached SQL is currently a production design draft, not a deployment-ready schema.
+
+Use it only after correcting:
+
+Incremental event snapshotting
+Lease tokens
+Retry backoff
+Safe chunk splitting
+Pass-aware uniqueness
+Manifest tracking
+Generation-aware failures
+Missing relational constraints
+
+Also, creating these tables alone is insufficient. Your scanner, forward worker, rollback/incremental worker, verifier, autoscaler and scheduler must be changed to use the new mig functions and tables before you start the containers.
