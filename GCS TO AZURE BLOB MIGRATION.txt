@@ -1,0 +1,953 @@
+GCS TO AZURE BLOB MIGRATION
+END-TO-END PREREQUISITES, ARCHITECTURE, DEPLOYMENT AND OPERATIONS DOCUMENT
+
+================================================================================
+1. OBJECTIVE
+================================================================================
+
+The objective of this solution is to migrate data from Google Cloud Storage (GCS)
+to Azure Blob Storage with:
+
+- Zero data loss
+- Continuous synchronization
+- Event-driven architecture
+- Automated rollback
+- Batch processing
+- Retry handling
+- Full audit trail
+
+Migration Architecture
+
+INITIAL SYNC
+
+GCS
+↓
+rclone copy
+↓
+Azure Blob
+
+------------------------------------------------
+
+DELTA SYNC
+
+GCS
+↓
+Bucket Notifications
+↓
+Pub/Sub
+↓
+Listener
+↓
+PostgreSQL
+↓
+Batch Creator
+↓
+20 Worker Containers
+↓
+Azure Blob
+
+------------------------------------------------
+
+ROLLBACK
+
+Azure Blob
+↓
+Event Grid
+↓
+Storage Queue
+↓
+Queue Listener
+↓
+PostgreSQL
+↓
+Rollback Batch Creator
+↓
+Rollback Workers
+↓
+GCS
+
+================================================================================
+2. GCP PROJECT INFORMATION
+================================================================================
+
+Project ID
+
+gcp-poc-501612
+
+Project Number
+
+615629292552
+
+Region
+
+asia-south1
+
+Status
+
+ACTIVE
+
+================================================================================
+3. ENABLE REQUIRED APIS
+================================================================================
+
+Purpose
+
+Enable all required Google Cloud Services.
+
+Commands
+
+gcloud services enable storage.googleapis.com
+
+gcloud services enable pubsub.googleapis.com
+
+gcloud services enable iam.googleapis.com
+
+gcloud services enable cloudresourcemanager.googleapis.com
+
+Validation
+
+gcloud services list --enabled | \
+egrep "storage.googleapis.com|pubsub.googleapis.com|iam.googleapis.com|cloudresourcemanager.googleapis.com"
+
+================================================================================
+4. GCS BUCKET CONFIGURATION
+================================================================================
+
+Migration Buckets
+
+highradius-poc-gcs-blobstorage
+highradius-poc-gcs-blobstorage1
+highradius-poc-gcs-blobstorage2
+highradius-poc-gcs-blobstorage3
+highradius-poc-gcs-blobstorage4
+highradius-poc-gcs-blobstorage5
+highradius-poc-gcs-blobstorage6
+highradius-poc-gcs-blobstorage7
+highradius-poc-gcs-blobstorage8
+highradius-poc-gcs-blobstorage9
+
+Validation
+
+gcloud storage buckets list
+
+Bucket Region
+
+gcloud storage buckets list \
+--format="table(name,location,storageClass)"
+
+================================================================================
+5. GCS BUCKET VALIDATION
+================================================================================
+
+Versioning
+
+Status
+
+Disabled
+
+Benefit
+
+Simpler Migration
+Simpler Rollback
+No Historic Object Versions
+
+Validation
+
+gcloud storage buckets describe gs://BUCKET_NAME
+
+------------------------------------------------
+
+Retention Policy
+
+Status
+
+None
+
+Benefit
+
+Delete Synchronization Allowed
+
+Validation
+
+gcloud storage buckets describe gs://BUCKET_NAME
+
+------------------------------------------------
+
+Lifecycle Rules
+
+Status
+
+None
+
+Benefit
+
+No automatic object deletion
+
+================================================================================
+6. SERVICE ACCOUNTS
+================================================================================
+
+FORWARD MIGRATION ACCOUNT
+
+Service Account
+
+rclone-sa
+
+Purpose
+
+Initial Migration
+
+GCS
+↓
+Azure Blob
+
+Create
+
+gcloud iam service-accounts create rclone-sa \
+--display-name="Rclone Service Account"
+
+Generate Key
+
+gcloud iam service-accounts keys create \
+rclone-sa-key.json \
+--iam-account=rclone-sa@PROJECT_ID.iam.gserviceaccount.com
+
+Role
+
+roles/storage.objectViewer
+
+Permissions
+
+List Objects
+Read Objects
+Download Objects
+
+Grant Bucket Permission
+
+gcloud storage buckets add-iam-policy-binding gs://BUCKET_NAME \
+--member="serviceAccount:rclone-sa@PROJECT_ID.iam.gserviceaccount.com" \
+--role="roles/storage.objectViewer"
+
+------------------------------------------------
+
+PUBSUB LISTENER ACCOUNT
+
+Service Account
+
+pubsub-listener-sa
+
+Purpose
+
+Read Pub/Sub Messages
+Insert Events Into PostgreSQL
+
+Create
+
+gcloud iam service-accounts create pubsub-listener-sa \
+--display-name="PubSub Listener Service Account"
+
+Generate Key
+
+gcloud iam service-accounts keys create \
+pubsub-listener-sa-key.json \
+--iam-account=pubsub-listener-sa@PROJECT_ID.iam.gserviceaccount.com
+
+Roles
+
+roles/pubsub.subscriber
+roles/pubsub.viewer
+
+Assign Roles
+
+gcloud projects add-iam-policy-binding PROJECT_ID \
+--member="serviceAccount:pubsub-listener-sa@PROJECT_ID.iam.gserviceaccount.com" \
+--role="roles/pubsub.subscriber"
+
+gcloud projects add-iam-policy-binding PROJECT_ID \
+--member="serviceAccount:pubsub-listener-sa@PROJECT_ID.iam.gserviceaccount.com" \
+--role="roles/pubsub.viewer"
+
+------------------------------------------------
+
+ROLLBACK ACCOUNT
+
+Service Account
+
+azure-to-gcs-sa
+
+Purpose
+
+Azure Blob
+↓
+GCS Rollback
+
+Create
+
+gcloud iam service-accounts create azure-to-gcs-sa \
+--display-name="Azure To GCS Service Account"
+
+Generate Key
+
+gcloud iam service-accounts keys create \
+azure-to-gcs-sa-key.json \
+--iam-account=azure-to-gcs-sa@PROJECT_ID.iam.gserviceaccount.com
+
+Role
+
+roles/storage.objectAdmin
+
+Grant Permission
+
+gcloud storage buckets add-iam-policy-binding gs://BUCKET_NAME \
+--member="serviceAccount:azure-to-gcs-sa@PROJECT_ID.iam.gserviceaccount.com" \
+--role="roles/storage.objectAdmin"
+
+================================================================================
+7. PUBSUB CONFIGURATION
+================================================================================
+
+Topic
+
+gcs-azureblob
+
+Create
+
+gcloud pubsub topics create gcs-azureblob
+
+Validation
+
+gcloud pubsub topics list
+
+------------------------------------------------
+
+Subscription
+
+gcs-azureblob-sync
+
+Create
+
+gcloud pubsub subscriptions create \
+gcs-azureblob-sync \
+--topic=gcs-azureblob
+
+Validation
+
+gcloud pubsub subscriptions list
+
+------------------------------------------------
+
+Ack Deadline
+
+600 Seconds
+
+Configure
+
+gcloud pubsub subscriptions update \
+gcs-azureblob-sync \
+--ack-deadline=600
+
+Validation
+
+gcloud pubsub subscriptions describe \
+gcs-azureblob-sync \
+--format="value(ackDeadlineSeconds)"
+
+================================================================================
+8. GCS NOTIFICATIONS
+================================================================================
+
+OBJECT_FINALIZE
+
+Purpose
+
+Capture New Files
+Capture Updated Files
+
+Command
+
+gcloud storage buckets notifications create \
+gs://BUCKET_NAME \
+--topic=gcs-azureblob \
+--event-types=OBJECT_FINALIZE
+
+------------------------------------------------
+
+OBJECT_DELETE
+
+Purpose
+
+Capture Deletes
+
+Command
+
+gcloud storage buckets notifications create \
+gs://BUCKET_NAME \
+--topic=gcs-azureblob \
+--event-types=OBJECT_DELETE
+
+------------------------------------------------
+
+OBJECT_ARCHIVE
+
+Purpose
+
+Capture Versioned Changes
+
+Command
+
+gcloud storage buckets notifications create \
+gs://BUCKET_NAME \
+--topic=gcs-azureblob \
+--event-types=OBJECT_ARCHIVE
+
+Validation
+
+gcloud storage buckets notifications list gs://BUCKET_NAME
+
+================================================================================
+9. WHY PUBSUB MUST BE ENABLED BEFORE INITIAL SYNC
+================================================================================
+
+Example
+
+Migration Duration
+
+10 Days
+
+Day 2
+1000 Files Uploaded
+
+Day 5
+500 Files Deleted
+
+Day 8
+300 Files Modified
+
+If Pub/Sub starts after copy completes:
+
+All changes are lost.
+
+Correct Design
+
+Day 0
+
+Enable Notifications
+Enable Pub/Sub
+Start Migration
+
+Result
+
+Every change is captured.
+
+================================================================================
+10. RCLONE CONFIGURATION
+================================================================================
+
+Current Configuration
+
+[gcs]
+
+type = google cloud storage
+project_number = 615629292552
+service_account_file = /opt/gcs-azure-sync/rclone-sa-key.json
+bucket_policy_only = true
+location = asia-south1
+
+------------------------------------------------
+
+[azureblob]
+
+type = azureblob
+account = hirteststoragemigration
+
+================================================================================
+11. INITIAL MIGRATION
+================================================================================
+
+Recommended Command
+
+rclone copy \
+gcs:BUCKET_NAME \
+azureblob:CONTAINER_NAME \
+--transfers 128 \
+--checkers 256 \
+--fast-list \
+--stats 60s
+
+Why COPY
+
+No Delete Operations
+Safe
+Supports Event Driven Delta Sync
+
+Do NOT Use
+
+rclone sync
+
+during initial migration.
+
+================================================================================
+12. AZURE SUBSCRIPTION
+================================================================================
+
+Subscription
+
+HiRAzurePOC2026
+
+Subscription ID
+
+06d33daf-16ca-4ada-83c4-a74f8322f61f
+
+Tenant
+
+9693a67a-ad85-472e-b685-4872e035687d
+
+================================================================================
+13. AZURE STORAGE ACCOUNT
+================================================================================
+
+Storage Account
+
+hirteststoragemigration
+
+Type
+
+StorageV2
+
+Performance
+
+Standard
+
+Replication
+
+LRS
+
+Access Tier
+
+Hot
+
+Region
+
+southindia
+
+TLS
+
+TLS1_2
+
+================================================================================
+14. AZURE CONTAINERS
+================================================================================
+
+1 GCS Bucket
+=
+1 Azure Container
+
+Validated
+
+highradius-poc-gcs-blobstorage
+highradius-poc-gcs-blobstorage1
+highradius-poc-gcs-blobstorage2
+highradius-poc-gcs-blobstorage3
+highradius-poc-gcs-blobstorage4
+highradius-poc-gcs-blobstorage5
+highradius-poc-gcs-blobstorage6
+highradius-poc-gcs-blobstorage7
+highradius-poc-gcs-blobstorage8
+highradius-poc-gcs-blobstorage9
+
+================================================================================
+15. AZURE EVENT GRID
+================================================================================
+
+Subscription
+
+blob-to-gcs-eventgrid
+
+Status
+
+Succeeded
+
+Events
+
+Microsoft.Storage.BlobCreated
+Microsoft.Storage.BlobDeleted
+Microsoft.Storage.DirectoryCreated
+Microsoft.Storage.DirectoryDeleted
+Microsoft.Storage.BlobRenamed
+Microsoft.Storage.DirectoryRenamed
+
+Retry Configuration
+
+Max Delivery Attempts
+
+30
+
+TTL
+
+1440 Minutes
+
+Dead Letter
+
+eventgrid-deadletter
+
+================================================================================
+16. AZURE STORAGE QUEUE
+================================================================================
+
+Queue Name
+
+blob-sync-events
+
+Purpose
+
+Event Buffer
+Rollback Processing
+
+================================================================================
+17. POSTGRESQL DATABASE
+================================================================================
+
+Database
+
+gcssync
+
+Host
+
+127.0.0.1
+
+Port
+
+5432
+
+User
+
+gcssync
+
+Recommended VM
+
+D8s_v5
+8 vCPU
+32 GB RAM
+512 GB Premium SSD
+
+================================================================================
+18. DATABASE TABLES
+================================================================================
+
+Forward Processing
+
+file_events
+sync_batches
+batch_files
+
+Rollback Processing
+
+blob_events
+rollback_batches
+rollback_batch_files
+
+Dedupe Table
+
+event_dedupe
+
+================================================================================
+19. DATABASE BATCH DESIGN
+================================================================================
+
+sync_batches
+
+Columns
+
+batch_id
+bucket_name
+file_count
+status
+created_at
+started_at
+completed_at
+
+Purpose
+
+Store Forward Batches
+
+------------------------------------------------
+
+rollback_batches
+
+Columns
+
+batch_id
+container_name
+file_count
+status
+created_at
+started_at
+completed_at
+
+Purpose
+
+Store Rollback Batches
+
+------------------------------------------------
+
+event_dedupe
+
+Columns
+
+bucket_name
+object_name
+generation
+operation
+
+Purpose
+
+Prevent Duplicate Processing
+
+================================================================================
+20. BATCH CONFIGURATION
+================================================================================
+
+BATCH_MAX_FILES
+
+5000
+
+BATCH_MAX_BYTES
+
+5368709120
+
+Equivalent
+
+5 GB
+
+BATCH_MAX_AGE_SEC
+
+120 Seconds
+
+Batch Created When
+
+5000 Files Reached
+
+OR
+
+5 GB Reached
+
+OR
+
+120 Seconds Passed
+
+================================================================================
+21. DELETE PROTECTION
+================================================================================
+
+DELETE_ENABLED=true
+
+DELETE_DELAY_SEC=3600
+
+Equivalent
+
+1 Hour
+
+Purpose
+
+Prevent Accidental Deletes
+Prevent Delete/Recreate Issues
+Protect Against Race Conditions
+
+================================================================================
+22. DOCKER DEPLOYMENT
+================================================================================
+
+Image
+
+gcs-worker:1.0
+
+Forward Worker
+
+python3 worker.py
+
+Rollback Worker
+
+python3 rollback_worker.py
+
+Current Deployment
+
+20 Worker Containers Running
+
+Benefits
+
+Parallel Processing
+High Throughput
+Reduced Backlog
+
+================================================================================
+23. CRON SCHEDULING
+================================================================================
+
+Forward Batch Creator
+
+*/1 * * * *
+
+python batch_creator.py
+
+------------------------------------------------
+
+Rollback Batch Creator
+
+*/1 * * * *
+
+python rollback_batch_creator.py
+
+------------------------------------------------
+
+Forward Autoscaling
+
+*/1 * * * *
+
+autoscale_forward.sh
+
+------------------------------------------------
+
+Rollback Autoscaling
+
+*/1 * * * *
+
+autoscale_rollback.sh
+
+------------------------------------------------
+
+Recovery
+
+*/10 * * * *
+
+recover_stale.sh
+
+Purpose
+
+Recover Stuck Events
+Recover Stale Batches
+
+================================================================================
+24. FORWARD PROCESSING FLOW
+================================================================================
+
+GCS
+↓
+Notifications
+↓
+Pub/Sub
+↓
+Listener
+↓
+PostgreSQL
+(file_events)
+↓
+Batch Creator
+↓
+sync_batches
+↓
+20 Workers
+↓
+Azure Blob
+
+================================================================================
+25. ROLLBACK PROCESSING FLOW
+================================================================================
+
+Azure Blob
+↓
+Event Grid
+(blob-to-gcs-eventgrid)
+↓
+Queue
+(blob-sync-events)
+↓
+Queue Listener
+↓
+PostgreSQL
+(blob_events)
+↓
+Rollback Batch Creator
+↓
+rollback_batches
+↓
+Rollback Workers
+↓
+GCS
+
+================================================================================
+26. VALIDATION COMMANDS
+================================================================================
+
+Pub/Sub
+
+gcloud pubsub subscriptions pull \
+gcs-azureblob-sync \
+--limit=5
+
+------------------------------------------------
+
+GCS
+
+rclone lsd gcs:
+
+------------------------------------------------
+
+Azure
+
+rclone lsd azureblob:
+
+------------------------------------------------
+
+Migration Validation
+
+rclone check \
+gcs:BUCKET_NAME \
+azureblob:CONTAINER_NAME
+
+================================================================================
+27. FINAL SIGN-OFF CHECKLIST
+================================================================================
+
+✅ APIs Enabled
+
+✅ Service Accounts Created
+
+✅ Keys Generated
+
+✅ Bucket Permissions Assigned
+
+✅ Pub/Sub Topic Created
+
+✅ Pub/Sub Subscription Created
+
+✅ Ack Deadline 600 Sec
+
+✅ Bucket Notifications Enabled
+
+✅ Rclone Configured
+
+✅ GCS Source Validated
+
+✅ Azure Storage Validated
+
+✅ Azure Containers Created
+
+✅ Azure Queue Created
+
+✅ Event Grid Configured
+
+✅ PostgreSQL Configured
+
+✅ Batching Configured
+
+✅ Delete Protection Enabled
+
+✅ Docker Workers Running
+
+✅ Cron Schedules Configured
+
+✅ Forward Sync Approved
+
+✅ Rollback Approved
+
+✅ Ready For Production Migration
